@@ -3,6 +3,7 @@ import aiohttp
 import json
 import re
 import time
+import os
 from datetime import datetime
 
 
@@ -10,13 +11,21 @@ from datetime import datetime
 # 🔧 CONFIG
 # ==========================
 CHECK_INTERVAL = 30
-TOTAL_PAGES = 13   # match your deployed version
+TOTAL_PAGES = 13
 
+# 🔐 Environment Variables (SET THESE IN RAILWAY)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
-# 🔐 MOVE THESE TO ENV VARIABLES (IMPORTANT)
-TELEGRAM_BOT_TOKEN = "YOUR_NEW_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
-DISCORD_WEBHOOK_URL = "YOUR_WEBHOOK_URL"
+if not TELEGRAM_BOT_TOKEN:
+    raise ValueError("❌ TELEGRAM_BOT_TOKEN not set")
+
+if not TELEGRAM_CHAT_ID:
+    raise ValueError("❌ TELEGRAM_CHAT_ID not set")
+
+if not DISCORD_WEBHOOK_URL:
+    raise ValueError("❌ DISCORD_WEBHOOK_URL not set")
 
 
 # ==========================
@@ -32,7 +41,7 @@ class AsyncProductScraper:
 
     def log(self, msg, level="INFO"):
         now = datetime.now().strftime("%H:%M:%S")
-        print(f"[{level}] {msg}")
+        print(f"[{now}] [{level}] {msg}")
 
     def get_url(self, page):
         return (
@@ -54,7 +63,7 @@ class AsyncProductScraper:
         try:
             async with session.get(url, headers=self.headers) as resp:
                 if resp.status != 200:
-                    self.log(f"Page {page} HTTP {resp.status}", "ERR")
+                    self.log(f"Page {page} HTTP {resp.status}", "ERROR")
                     return page, {}, 0, 0
 
                 raw = await resp.text()
@@ -66,14 +75,14 @@ class AsyncProductScraper:
                 return page, products, in_stock, total
 
         except Exception as e:
-            self.log(f"Page {page} error: {e}", "ERR")
+            self.log(f"Page {page} error: {e}", "ERROR")
             return page, {}, 0, 0
 
     def parse_products(self, json_data):
         try:
             response = json.loads(json_data)
             product_response = json.loads(response["ProductResponse"])
-        except:
+        except Exception:
             return {}
 
         products = {}
@@ -107,17 +116,27 @@ class AsyncProductScraper:
 # 📲 ALERT SYSTEM
 # ==========================
 async def send_telegram(session, message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
-    }
-    await session.post(url, data=payload)
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message
+        }
+        async with session.post(url, data=payload) as resp:
+            if resp.status != 200:
+                print("Telegram error:", resp.status)
+    except Exception as e:
+        print("Telegram exception:", e)
 
 
 async def send_discord(session, message):
-    payload = {"content": message}
-    await session.post(DISCORD_WEBHOOK_URL, json=payload)
+    try:
+        payload = {"content": message}
+        async with session.post(DISCORD_WEBHOOK_URL, json=payload) as resp:
+            if resp.status not in (200, 204):
+                print("Discord error:", resp.status)
+    except Exception as e:
+        print("Discord exception:", e)
 
 
 async def send_alert(session, message):
@@ -134,7 +153,9 @@ async def monitor():
     scraper = AsyncProductScraper()
     previous_stock = {}
 
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
 
         scraper.log("🔥 Async Stock Monitor Started")
 
@@ -153,7 +174,6 @@ async def monitor():
 
             current_stock = {}
 
-            # Page summary display
             for page, products, in_stock, total in results:
                 scraper.log(f"P{page}: {in_stock}/{total} in stock", "DEBUG")
 
@@ -171,7 +191,6 @@ async def monitor():
                             await send_alert(session, msg)
                             alert_count += 1
                             scraper.log(f"Restock: {product['title']}", "ALERT")
-
                     else:
                         if product["stock"]:
                             msg = (
