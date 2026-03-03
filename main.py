@@ -10,7 +10,7 @@ from datetime import datetime
 # ==========================
 # 🔧 CONFIG
 # ==========================
-CHECK_INTERVAL = 30
+CHECK_INTERVAL = 10
 TOTAL_PAGES = 13
 
 # 🔐 Environment Variables (SET THESE IN RAILWAY)
