@@ -8,7 +8,7 @@ import re
 # CONFIG
 # ======================
 
-WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK"
+WEBHOOK_URL = "https://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
 
 CHECK_INTERVAL = 5
 
@@ -23,29 +23,11 @@ HEADERS = {
 }
 
 # ======================
-# API LIST (FASTER MONITORING)
+# API CONFIG
 # ======================
 
-APIS = [
-
-{
-"name":"Majorette New",
-"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsFilters",
-"params":{
-"PageNo":1,
-"PageSize":20,
-"SortExpression":"NewArrivals",
-"OnSale":0,
-"SearchString":"brand",
-"OutOfStock":0,
-"MasterBrand":1335,
-"pcode":600119,
-"isclub":1
-}
-},
-
-{
-"name":"Brand 113 Popular",
+API = {
+"name":"Brand 113 Monitor",
 "url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
 "params":{
 "PageNo":1,
@@ -58,8 +40,6 @@ APIS = [
 "isclub":0
 }
 }
-
-]
 
 # ======================
 # SESSION
@@ -125,13 +105,13 @@ def send_discord(product,message):
 # FETCH PRODUCTS
 # ======================
 
-def fetch_products(api,page):
+def fetch_products(page):
 
-    params=api["params"].copy()
+    params=API["params"].copy()
     params["PageNo"]=page
 
     try:
-        r=session.get(api["url"],params=params,timeout=15)
+        r=session.get(API["url"],params=params,timeout=15)
         data=r.json()
     except:
         return []
@@ -145,7 +125,7 @@ def fetch_products(api,page):
 
     products=parsed.get("Products",[])
 
-    print(f"{api['name']} Page {page} → {len(products)}")
+    print(f"Page {page} → {len(products)} products")
 
     return products
 
@@ -166,8 +146,6 @@ def parse_product(p):
     product_slug=slugify(name)
 
     url=f"https://www.firstcry.com/{brand_slug}/{product_slug}/{pid}/product-detail"
-
-    # FIXED IMAGE SYSTEM
 
     image=f"https://cdn.fcglcdn.com/brainbees/images/products/438x531/{pid}a.webp"
 
@@ -190,55 +168,53 @@ def monitor():
 
     db=load_db()
 
-    print("FirstCry monitor started")
+    print("Brand 113 monitor started")
 
     while True:
 
         try:
 
-            for api in APIS:
+            page=1
 
-                page=1
+            while True:
 
-                while True:
+                products=fetch_products(page)
 
-                    products=fetch_products(api,page)
+                if not products:
+                    break
 
-                    if not products:
-                        break
+                for p in products:
 
-                    for p in products:
+                    product=parse_product(p)
 
-                        product=parse_product(p)
+                    pid=product["id"]
 
-                        pid=product["id"]
+                    if pid not in db:
 
-                        if pid not in db:
-
-                            send_discord(product,"🆕 New Product")
-
-                            db[pid]=product
-                            continue
-
-                        old=db[pid]
-
-                        changes=[]
-
-                        if product["price"]!=old["price"]:
-                            changes.append(f"💰 Price: ₹{old['price']} → ₹{product['price']}")
-
-                        if old["qty"]==0 and product["qty"]>0:
-                            changes.append(f"🚨 RESTOCK {old['qty']} → {product['qty']}")
-
-                        if product["qty"]!=old["qty"]:
-                            changes.append(f"📦 Qty: {old['qty']} → {product['qty']}")
-
-                        if changes:
-                            send_discord(product,"\n".join(changes))
+                        send_discord(product,"🆕 New Product")
 
                         db[pid]=product
+                        continue
 
-                    page+=1
+                    old=db[pid]
+
+                    changes=[]
+
+                    if product["price"]!=old["price"]:
+                        changes.append(f"💰 Price: ₹{old['price']} → ₹{product['price']}")
+
+                    if old["qty"]==0 and product["qty"]>0:
+                        changes.append(f"🚨 RESTOCK {old['qty']} → {product['qty']}")
+
+                    if product["qty"]!=old["qty"]:
+                        changes.append(f"📦 Qty: {old['qty']} → {product['qty']}")
+
+                    if changes:
+                        send_discord(product,"\n".join(changes))
+
+                    db[pid]=product
+
+                page+=1
 
             save_db(db)
 
