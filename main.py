@@ -9,11 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 # CONFIG
 # ======================
 
-WEBHOOK_URL = "https://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
+WEBHOOK_URL = "Yhttps://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
 
 CHECK_INTERVAL = 8
 MAX_THREADS = 5
-
 DATA_FILE = "database.json"
 
 HEADERS = {
@@ -24,29 +23,58 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest"
 }
 
-API = {
-    "url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
-    "params":{
-        "PageNo":1,
-        "PageSize":20,
-        "SortExpression":"NewArrivals",
-        "OnSale":0,
-        "SearchString":"brand",
-        "SubCatId":"",
-        "BrandId":"",
-        "Price":"",
-        "Age":"",
-        "Color":"",
-        "OptionalFilter":"",
-        "OutOfStock":"",
-        "combo":"",
-        "discount":"",
-        "searchwithincat":"",
-        "MasterBrand":113,
-        "pcode":380008,
-        "isclub":0
-    }
+# ======================
+# 3 API SOURCES
+# ======================
+
+APIS = [
+
+{
+"name":"New Arrivals",
+"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
+"params":{
+"PageNo":1,
+"PageSize":20,
+"SortExpression":"NewArrivals",
+"OnSale":0,
+"SearchString":"brand",
+"MasterBrand":113,
+"pcode":380008,
+"isclub":0
 }
+},
+
+{
+"name":"Popularity",
+"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
+"params":{
+"PageNo":1,
+"PageSize":20,
+"SortExpression":"popularity",
+"OnSale":5,
+"SearchString":"brand",
+"MasterBrand":113,
+"pcode":380008,
+"isclub":0
+}
+},
+
+{
+"name":"Filters API",
+"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsFilters",
+"params":{
+"PageNo":1,
+"PageSize":20,
+"SortExpression":"NewArrivals",
+"SearchString":"brand",
+"OutOfStock":0,
+"MasterBrand":113,
+"pcode":380008,
+"isclub":0
+}
+}
+
+]
 
 # ======================
 # SESSION
@@ -54,7 +82,6 @@ API = {
 
 session = requests.Session()
 session.headers.update(HEADERS)
-
 session.get("https://www.firstcry.com/")
 
 # ======================
@@ -81,61 +108,57 @@ def slugify(text):
     return text.strip('-')
 
 # ======================
-# DISCORD MESSAGE
+# DISCORD ALERT
 # ======================
 
 def send_discord(product,message):
 
     embed={
         "title":"Hot Wheels Stock Bot",
-        "description":f"📉 **Stock Alert**\n\n👉 [Click here to Buy]({product['url']})",
+        "description":f"{message}\n\n👉 [Click here to Buy]({product['url']})",
         "color":16753920,
         "thumbnail":{"url":product["image"]},
         "fields":[
-            {"name":"🏷 Product Name","value":product["name"],"inline":False},
+            {"name":"🏷 Product","value":product["name"],"inline":False},
             {"name":"💰 Price","value":f"₹{product['price']}","inline":True},
             {"name":"📦 Status","value":product["stock"],"inline":True},
-            {"name":"🔢 Quantity","value":f"{product['qty']} left","inline":True},
-            {"name":"💸 Previous","value":f"₹{product['old_price']}","inline":False}
+            {"name":"🔢 Qty","value":str(product["qty"]),"inline":True}
         ],
         "footer":{"text":"FirstCry Monitor"}
     }
 
-    payload={
-        "username":"Hot Wheels Stock Bot",
-        "embeds":[embed]
-    }
+    payload={"username":"Hot Wheels Stock Bot","embeds":[embed]}
 
     try:
-        requests.post(WEBHOOK_URL,json=payload)
+        requests.post(WEBHOOK_URL,json=payload,timeout=10)
     except:
         pass
 
 # ======================
-# FETCH PRODUCTS
+# FETCH PAGE
 # ======================
 
-def fetch_page(page):
+def fetch_page(api,page):
 
-    params = API["params"].copy()
-    params["PageNo"] = page
+    params=api["params"].copy()
+    params["PageNo"]=page
 
     try:
-        r = session.get(API["url"],params=params,timeout=15)
-        data = r.json()
+        r=session.get(api["url"],params=params,timeout=15)
+        data=r.json()
     except:
         return []
 
-    response = data.get("ProductResponse")
+    response=data.get("ProductResponse")
 
     if not response:
         return []
 
-    parsed = json.loads(response)
+    parsed=json.loads(response)
 
-    products = parsed.get("Products",[])
+    products=parsed.get("Products",[])
 
-    print(f"Page {page} → {len(products)}")
+    print(f"{api['name']} Page {page} → {len(products)}")
 
     return products
 
@@ -171,16 +194,20 @@ def parse_product(p):
     }
 
 # ======================
-# FAST PAGE SCAN
+# SCAN ALL APIS
 # ======================
 
-def scan_all_pages():
+def scan_products():
 
     products=[]
 
     with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
 
-        futures=[executor.submit(fetch_page,i) for i in range(1,10)]
+        futures=[]
+
+        for api in APIS:
+            for page in range(1,8):
+                futures.append(executor.submit(fetch_page,api,page))
 
         for f in futures:
             result=f.result()
@@ -197,26 +224,24 @@ def monitor():
 
     db=load_db()
 
-    print("Fast monitor started")
+    print("Multi-API monitor started")
 
     while True:
 
         try:
 
-            products=scan_all_pages()
+            products=scan_products()
 
             print("Total scanned:",len(products))
 
             for p in products:
 
                 product=parse_product(p)
-
                 pid=product["id"]
 
                 if pid not in db:
 
-                    send_discord(product,"🆕 New Product")
-
+                    send_discord(product,"🆕 New Product Detected")
                     db[pid]=product
                     continue
 
@@ -225,7 +250,7 @@ def monitor():
                 changes=[]
 
                 if product["price"]!=old["price"]:
-                    changes.append(f"💰 Price changed ₹{old['price']} → ₹{product['price']}")
+                    changes.append(f"💰 Price {old['price']} → {product['price']}")
 
                 if old["qty"]==0 and product["qty"]>0:
                     changes.append(f"🚨 RESTOCK {old['qty']} → {product['qty']}")
@@ -241,7 +266,6 @@ def monitor():
             save_db(db)
 
         except Exception as e:
-
             print("Monitor error:",e)
 
         time.sleep(CHECK_INTERVAL)
