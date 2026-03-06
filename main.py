@@ -1,218 +1,263 @@
-import asyncio
-import aiohttp
-import json
-import re
+import requests
 import time
+import json
 import os
-from datetime import datetime
+import re
 
+WEBHOOK_URL = "https://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
 
-# ==========================
-# 🔧 CONFIG
-# ==========================
-CHECK_INTERVAL = 10
-TOTAL_PAGES = 13
+CHECK_INTERVAL = 5
 
-# 🔐 Environment Variables (SET THESE IN RAILWAY)
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+DATA_FILE = "database.json"
 
-if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("❌ TELEGRAM_BOT_TOKEN not set")
+HEADERS = {
+ "User-Agent":"Mozilla/5.0",
+ "Accept":"application/json",
+ "Referer":"https://www.firstcry.com/",
+ "Origin":"https://www.firstcry.com",
+ "X-Requested-With":"XMLHttpRequest"
+}
 
-if not TELEGRAM_CHAT_ID:
-    raise ValueError("❌ TELEGRAM_CHAT_ID not set")
+# =============================
+# API CONFIGS
+# =============================
 
-if not DISCORD_WEBHOOK_URL:
-    raise ValueError("❌ DISCORD_WEBHOOK_URL not set")
+APIS = [
 
+{
+"name":"Hotwheels Monitor",
 
-# ==========================
-# 📦 SCRAPER
-# ==========================
-class AsyncProductScraper:
+"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsFilters",
 
-    def __init__(self):
-        self.headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        }
+"params":{
+"PageNo":1,
+"PageSize":20,
+"SortExpression":"NewArrivals",
+"OnSale":0,
+"SearchString":"brand",
+"OutOfStock":0,
+"MasterBrand":1335,
+"pcode":600119,
+"isclub":1
+}
+},
 
-    def log(self, msg, level="INFO"):
-        now = datetime.now().strftime("%H:%M:%S")
-        print(f"[{now}] [{level}] {msg}")
+{
+"name":"Brand 113 Monitor",
 
-    def get_url(self, page):
-        return (
-            "https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging?"
-            f"PageNo={page}&PageSize=20&SortExpression=popularity&OnSale=5"
-            "&SearchString=brand&MasterBrand=113&pcode=380008&isclub=0"
-        )
+"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
 
-    def slugify(self, text):
-        text = text.lower()
-        text = text.replace('&', 'and')
-        text = re.sub(r'[^a-z0-9\s-]', '', text)
-        text = re.sub(r'[\s-]+', '-', text)
-        return text.strip('-')
+"params":{
+"PageNo":1,
+"PageSize":20,
+"SortExpression":"popularity",
+"OnSale":5,
+"SearchString":"brand",
+"MasterBrand":113,
+"pcode":380008,
+"isclub":0
+}
+}
 
-    async def fetch_page(self, session, page):
-        url = self.get_url(page)
+]
+
+# =============================
+# SESSION
+# =============================
+
+session = requests.Session()
+session.headers.update(HEADERS)
+
+session.get("https://www.firstcry.com/")
+
+# =============================
+# DATABASE
+# =============================
+
+def load_db():
+
+    if os.path.exists(DATA_FILE):
+
+        with open(DATA_FILE) as f:
+            return json.load(f)
+
+    return {}
+
+def save_db(data):
+
+    with open(DATA_FILE,"w") as f:
+        json.dump(data,f)
+
+# =============================
+# UTIL
+# =============================
+
+def slugify(text):
+
+    text=text.lower()
+
+    text=re.sub(r'[^a-z0-9]+','-',text)
+
+    return text.strip('-')
+
+# =============================
+# DISCORD
+# =============================
+
+def send_discord(product,message):
+
+    embed={
+        "title":product["name"],
+        "url":product["url"],
+        "description":message,
+        "color":3066993,
+        "image":{"url":product["image"]},
+        "fields":[
+            {"name":"Price","value":f"₹{product['price']}","inline":True},
+            {"name":"MRP","value":f"₹{product['old_price']}","inline":True},
+            {"name":"Stock","value":product["stock"],"inline":True},
+            {"name":"Qty","value":str(product["qty"]),"inline":True}
+        ],
+        "footer":{"text":"FirstCry Monitor"}
+    }
+
+    payload={"embeds":[embed]}
+
+    try:
+        requests.post(WEBHOOK_URL,json=payload)
+    except:
+        print("Webhook failed")
+
+# =============================
+# FETCH PRODUCTS
+# =============================
+
+def fetch_products(api,page):
+
+    params=api["params"].copy()
+
+    params["PageNo"]=page
+
+    r=session.get(api["url"],params=params)
+
+    data=r.json()
+
+    response=data.get("ProductResponse")
+
+    if not response:
+        return []
+
+    parsed=json.loads(response)
+
+    products=parsed.get("Products",[])
+
+    print(f"{api['name']} Page {page} → {len(products)} products")
+
+    return products
+
+# =============================
+# PARSE PRODUCT
+# =============================
+
+def parse_product(p):
+
+    qty=int(p.get("CrntStock",0))
+
+    name=p.get("PNm","")
+    brand=p.get("BNm","")
+
+    brand_slug=slugify(brand)
+    product_slug=slugify(name)
+
+    pid=str(p.get("PId"))
+
+    url=f"https://www.firstcry.com/{brand_slug}/{product_slug}/{pid}/product-detail"
+
+    image=p.get("ImgUrl","")
+
+    if image and not image.startswith("http"):
+        image="https:"+image
+
+    return{
+        "id":pid,
+        "name":name,
+        "price":p.get("SP",p.get("MRP")),
+        "old_price":p.get("MRP"),
+        "qty":qty,
+        "stock":"In Stock" if qty>0 else "Out of Stock",
+        "image":image,
+        "url":url
+    }
+
+# =============================
+# MONITOR
+# =============================
+
+def monitor():
+
+    db=load_db()
+
+    print("FirstCry monitor started")
+
+    while True:
 
         try:
-            async with session.get(url, headers=self.headers) as resp:
-                if resp.status != 200:
-                    self.log(f"Page {page} HTTP {resp.status}", "ERROR")
-                    return page, {}, 0, 0
 
-                raw = await resp.text()
-                products = self.parse_products(raw)
+            for api in APIS:
 
-                in_stock = sum(1 for p in products.values() if p["stock"])
-                total = len(products)
+                page=1
 
-                return page, products, in_stock, total
+                while True:
+
+                    products=fetch_products(api,page)
+
+                    if not products:
+                        break
+
+                    for p in products:
+
+                        product=parse_product(p)
+
+                        pid=product["id"]
+
+                        if pid not in db:
+
+                            send_discord(product,"🆕 New Product")
+
+                            db[pid]=product
+                            continue
+
+                        old=db[pid]
+
+                        changes=[]
+
+                        if product["price"]!=old["price"]:
+                            changes.append(f"💰 Price: ₹{old['price']} → ₹{product['price']}")
+
+                        if old["qty"]==0 and product["qty"]>0:
+                            changes.append(f"🚨 Restock: {old['qty']} → {product['qty']}")
+
+                        if product["qty"]!=old["qty"]:
+                            changes.append(f"📦 Qty: {old['qty']} → {product['qty']}")
+
+                        if changes:
+                            send_discord(product,"\n".join(changes))
+
+                        db[pid]=product
+
+                    page+=1
+
+            save_db(db)
 
         except Exception as e:
-            self.log(f"Page {page} error: {e}", "ERROR")
-            return page, {}, 0, 0
 
-    def parse_products(self, json_data):
-        try:
-            response = json.loads(json_data)
-            product_response = json.loads(response["ProductResponse"])
-        except Exception:
-            return {}
+            print("Error:",e)
 
-        products = {}
+        time.sleep(CHECK_INTERVAL)
 
-        for item in product_response.get("Products", []):
-            pid = item.get("PId")
-            title = item.get("PNm")
+# =============================
+# START
+# =============================
 
-            if not pid or not title:
-                continue
-
-            stock_count = int(item.get("CrntStock", 0))
-            in_stock = stock_count > 0
-            price = float(item.get("discprice") or item.get("MRP", 0))
-
-            slug = self.slugify(title)
-            link = f"https://www.firstcry.com/hot-wheels/{slug}/{pid}/product-detail"
-
-            products[pid] = {
-                "title": title,
-                "price": price,
-                "stock": in_stock,
-                "stock_count": stock_count,
-                "link": link
-            }
-
-        return products
-
-
-# ==========================
-# 📲 ALERT SYSTEM
-# ==========================
-async def send_telegram(session, message):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message
-        }
-        async with session.post(url, data=payload) as resp:
-            if resp.status != 200:
-                print("Telegram error:", resp.status)
-    except Exception as e:
-        print("Telegram exception:", e)
-
-
-async def send_discord(session, message):
-    try:
-        payload = {"content": message}
-        async with session.post(DISCORD_WEBHOOK_URL, json=payload) as resp:
-            if resp.status not in (200, 204):
-                print("Discord error:", resp.status)
-    except Exception as e:
-        print("Discord exception:", e)
-
-
-async def send_alert(session, message):
-    await asyncio.gather(
-        send_telegram(session, message),
-        send_discord(session, message)
-    )
-
-
-# ==========================
-# 🚀 MONITOR LOOP
-# ==========================
-async def monitor():
-    scraper = AsyncProductScraper()
-    previous_stock = {}
-
-    timeout = aiohttp.ClientTimeout(total=30)
-
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-
-        scraper.log("🔥 Async Stock Monitor Started")
-
-        while True:
-            start_time = time.time()
-            alert_count = 0
-
-            scraper.log(f"Scan Starting — Tracked: {len(previous_stock)} items")
-
-            tasks = [
-                scraper.fetch_page(session, page)
-                for page in range(1, TOTAL_PAGES + 1)
-            ]
-
-            results = await asyncio.gather(*tasks)
-
-            current_stock = {}
-
-            for page, products, in_stock, total in results:
-                scraper.log(f"P{page}: {in_stock}/{total} in stock", "DEBUG")
-
-                for pid, product in products.items():
-                    current_stock[pid] = product
-
-                    if pid in previous_stock:
-                        if not previous_stock[pid]["stock"] and product["stock"]:
-                            msg = (
-                                f"🔥 RESTOCK ALERT\n\n"
-                                f"{product['title']}\n"
-                                f"₹{product['price']}\n"
-                                f"{product['link']}"
-                            )
-                            await send_alert(session, msg)
-                            alert_count += 1
-                            scraper.log(f"Restock: {product['title']}", "ALERT")
-                    else:
-                        if product["stock"]:
-                            msg = (
-                                f"🔥 IN STOCK\n\n"
-                                f"{product['title']}\n"
-                                f"₹{product['price']}\n"
-                                f"{product['link']}"
-                            )
-                            await send_alert(session, msg)
-                            alert_count += 1
-                            scraper.log(f"Initial: {product['title']}", "ALERT")
-
-            previous_stock = current_stock
-
-            duration = round(time.time() - start_time, 2)
-            scraper.log(
-                f"Done in {duration}s | {len(current_stock)} items | {alert_count} alerts",
-                "OK"
-            )
-
-            await asyncio.sleep(CHECK_INTERVAL)
-
-
-if __name__ == "__main__":
-    asyncio.run(monitor())
+if __name__=="__main__":
+    monitor()
