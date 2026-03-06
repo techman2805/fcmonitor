@@ -4,31 +4,33 @@ import json
 import os
 import re
 
-WEBHOOK_URL = "https://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
+# ======================
+# CONFIG
+# ======================
+
+WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK"
 
 CHECK_INTERVAL = 5
 
 DATA_FILE = "database.json"
 
 HEADERS = {
- "User-Agent":"Mozilla/5.0",
- "Accept":"application/json",
- "Referer":"https://www.firstcry.com/",
- "Origin":"https://www.firstcry.com",
- "X-Requested-With":"XMLHttpRequest"
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "Referer": "https://www.firstcry.com/",
+    "Origin": "https://www.firstcry.com",
+    "X-Requested-With": "XMLHttpRequest"
 }
 
-# =============================
-# API CONFIGS
-# =============================
+# ======================
+# API LIST (FASTER MONITORING)
+# ======================
 
 APIS = [
 
 {
-"name":"Hotwheels Monitor",
-
+"name":"Majorette New",
 "url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsFilters",
-
 "params":{
 "PageNo":1,
 "PageSize":20,
@@ -43,10 +45,8 @@ APIS = [
 },
 
 {
-"name":"Brand 113 Monitor",
-
+"name":"Brand 113 Popular",
 "url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
-
 "params":{
 "PageNo":1,
 "PageSize":20,
@@ -61,48 +61,41 @@ APIS = [
 
 ]
 
-# =============================
+# ======================
 # SESSION
-# =============================
+# ======================
 
 session = requests.Session()
 session.headers.update(HEADERS)
 
 session.get("https://www.firstcry.com/")
 
-# =============================
+# ======================
 # DATABASE
-# =============================
+# ======================
 
 def load_db():
-
     if os.path.exists(DATA_FILE):
-
         with open(DATA_FILE) as f:
             return json.load(f)
-
     return {}
 
 def save_db(data):
-
     with open(DATA_FILE,"w") as f:
-        json.dump(data,f)
+        json.dump(data,f,indent=2)
 
-# =============================
-# UTIL
-# =============================
+# ======================
+# UTILITIES
+# ======================
 
 def slugify(text):
-
     text=text.lower()
-
     text=re.sub(r'[^a-z0-9]+','-',text)
-
     return text.strip('-')
 
-# =============================
-# DISCORD
-# =============================
+# ======================
+# DISCORD ALERT
+# ======================
 
 def send_discord(product,message):
 
@@ -116,7 +109,7 @@ def send_discord(product,message):
             {"name":"Price","value":f"₹{product['price']}","inline":True},
             {"name":"MRP","value":f"₹{product['old_price']}","inline":True},
             {"name":"Stock","value":product["stock"],"inline":True},
-            {"name":"Qty","value":str(product["qty"]),"inline":True}
+            {"name":"Quantity","value":str(product["qty"]),"inline":True}
         ],
         "footer":{"text":"FirstCry Monitor"}
     }
@@ -124,23 +117,24 @@ def send_discord(product,message):
     payload={"embeds":[embed]}
 
     try:
-        requests.post(WEBHOOK_URL,json=payload)
-    except:
-        print("Webhook failed")
+        requests.post(WEBHOOK_URL,json=payload,timeout=10)
+    except Exception as e:
+        print("Webhook error:",e)
 
-# =============================
+# ======================
 # FETCH PRODUCTS
-# =============================
+# ======================
 
 def fetch_products(api,page):
 
     params=api["params"].copy()
-
     params["PageNo"]=page
 
-    r=session.get(api["url"],params=params)
-
-    data=r.json()
+    try:
+        r=session.get(api["url"],params=params,timeout=15)
+        data=r.json()
+    except:
+        return []
 
     response=data.get("ProductResponse")
 
@@ -151,32 +145,31 @@ def fetch_products(api,page):
 
     products=parsed.get("Products",[])
 
-    print(f"{api['name']} Page {page} → {len(products)} products")
+    print(f"{api['name']} Page {page} → {len(products)}")
 
     return products
 
-# =============================
+# ======================
 # PARSE PRODUCT
-# =============================
+# ======================
 
 def parse_product(p):
 
-    qty=int(p.get("CrntStock",0))
+    pid=str(p.get("PId"))
 
     name=p.get("PNm","")
     brand=p.get("BNm","")
 
+    qty=int(p.get("CrntStock",0))
+
     brand_slug=slugify(brand)
     product_slug=slugify(name)
 
-    pid=str(p.get("PId"))
-
     url=f"https://www.firstcry.com/{brand_slug}/{product_slug}/{pid}/product-detail"
 
-    image=p.get("ImgUrl","")
+    # FIXED IMAGE SYSTEM
 
-    if image and not image.startswith("http"):
-        image="https:"+image
+    image=f"https://cdn.fcglcdn.com/brainbees/images/products/438x531/{pid}a.webp"
 
     return{
         "id":pid,
@@ -189,9 +182,9 @@ def parse_product(p):
         "url":url
     }
 
-# =============================
+# ======================
 # MONITOR
-# =============================
+# ======================
 
 def monitor():
 
@@ -235,7 +228,7 @@ def monitor():
                             changes.append(f"💰 Price: ₹{old['price']} → ₹{product['price']}")
 
                         if old["qty"]==0 and product["qty"]>0:
-                            changes.append(f"🚨 Restock: {old['qty']} → {product['qty']}")
+                            changes.append(f"🚨 RESTOCK {old['qty']} → {product['qty']}")
 
                         if product["qty"]!=old["qty"]:
                             changes.append(f"📦 Qty: {old['qty']} → {product['qty']}")
@@ -251,13 +244,13 @@ def monitor():
 
         except Exception as e:
 
-            print("Error:",e)
+            print("Monitor error:",e)
 
         time.sleep(CHECK_INTERVAL)
 
-# =============================
+# ======================
 # START
-# =============================
+# ======================
 
 if __name__=="__main__":
     monitor()
