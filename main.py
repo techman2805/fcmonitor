@@ -22,23 +22,18 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest"
 }
 
-# ======================
-# API CONFIG
-# ======================
-
 API = {
-"name":"Brand 113 Monitor",
-"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
-"params":{
-"PageNo":1,
-"PageSize":20,
-"SortExpression":"popularity",
-"OnSale":5,
-"SearchString":"brand",
-"MasterBrand":113,
-"pcode":380008,
-"isclub":0
-}
+    "url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
+    "params":{
+        "PageNo":1,
+        "PageSize":20,
+        "SortExpression":"popularity",
+        "OnSale":5,
+        "SearchString":"brand",
+        "MasterBrand":113,
+        "pcode":380008,
+        "isclub":0
+    }
 }
 
 # ======================
@@ -74,30 +69,70 @@ def slugify(text):
     return text.strip('-')
 
 # ======================
-# DISCORD ALERT
+# DISCORD EMBED
 # ======================
 
 def send_discord(product,message):
 
-    embed={
-        "title":product["name"],
-        "url":product["url"],
-        "description":message,
-        "color":3066993,
-        "image":{"url":product["image"]},
-        "fields":[
-            {"name":"Price","value":f"₹{product['price']}","inline":True},
-            {"name":"MRP","value":f"₹{product['old_price']}","inline":True},
-            {"name":"Stock","value":product["stock"],"inline":True},
-            {"name":"Quantity","value":str(product["qty"]),"inline":True}
+    embed = {
+        "title": "Hot Wheels Stock Bot",
+        "description": f"📉 **Price Drop Alert!**\n\n👉 [Click here to Buy on FirstCry]({product['url']})",
+        "color": 16753920,
+        "thumbnail": {
+            "url": product["image"]
+        },
+        "fields": [
+
+            {
+                "name": "🏷 Product Name",
+                "value": product["name"],
+                "inline": False
+            },
+
+            {
+                "name": "💰 Price",
+                "value": f"₹{product['price']}",
+                "inline": True
+            },
+
+            {
+                "name": "📦 Status",
+                "value": product["stock"],
+                "inline": True
+            },
+
+            {
+                "name": "🔢 Quantity",
+                "value": f"Only {product['qty']} Left!",
+                "inline": True
+            },
+
+            {
+                "name": "📊 Analytics",
+                "value": "• Status Changes: 1",
+                "inline": False
+            },
+
+            {
+                "name": "💸 Previous",
+                "value": f"₹{product['old_price']}",
+                "inline": False
+            }
+
         ],
-        "footer":{"text":"FirstCry Monitor"}
+
+        "footer": {
+            "text": "FirstCry Monitor"
+        }
     }
 
-    payload={"embeds":[embed]}
+    payload = {
+        "username": "Hot Wheels Stock Bot",
+        "embeds": [embed]
+    }
 
     try:
-        requests.post(WEBHOOK_URL,json=payload,timeout=10)
+        requests.post(WEBHOOK_URL,json=payload)
     except Exception as e:
         print("Webhook error:",e)
 
@@ -107,23 +142,23 @@ def send_discord(product,message):
 
 def fetch_products(page):
 
-    params=API["params"].copy()
-    params["PageNo"]=page
+    params = API["params"].copy()
+    params["PageNo"] = page
 
     try:
-        r=session.get(API["url"],params=params,timeout=15)
-        data=r.json()
+        r = session.get(API["url"],params=params)
+        data = r.json()
     except:
         return []
 
-    response=data.get("ProductResponse")
+    response = data.get("ProductResponse")
 
     if not response:
         return []
 
-    parsed=json.loads(response)
+    parsed = json.loads(response)
 
-    products=parsed.get("Products",[])
+    products = parsed.get("Products",[])
 
     print(f"Page {page} → {len(products)} products")
 
@@ -135,21 +170,21 @@ def fetch_products(page):
 
 def parse_product(p):
 
-    pid=str(p.get("PId"))
+    pid = str(p.get("PId"))
 
-    name=p.get("PNm","")
-    brand=p.get("BNm","")
+    name = p.get("PNm","")
+    brand = p.get("BNm","")
 
-    qty=int(p.get("CrntStock",0))
+    qty = int(p.get("CrntStock",0))
 
-    brand_slug=slugify(brand)
-    product_slug=slugify(name)
+    brand_slug = slugify(brand)
+    product_slug = slugify(name)
 
-    url=f"https://www.firstcry.com/{brand_slug}/{product_slug}/{pid}/product-detail"
+    url = f"https://www.firstcry.com/{brand_slug}/{product_slug}/{pid}/product-detail"
 
-    image=f"https://cdn.fcglcdn.com/brainbees/images/products/438x531/{pid}a.webp"
+    image = f"https://cdn.fcglcdn.com/brainbees/images/products/438x531/{pid}a.webp"
 
-    return{
+    return {
         "id":pid,
         "name":name,
         "price":p.get("SP",p.get("MRP")),
@@ -166,7 +201,7 @@ def parse_product(p):
 
 def monitor():
 
-    db=load_db()
+    db = load_db()
 
     print("Brand 113 monitor started")
 
@@ -174,47 +209,47 @@ def monitor():
 
         try:
 
-            page=1
+            page = 1
 
             while True:
 
-                products=fetch_products(page)
+                products = fetch_products(page)
 
                 if not products:
                     break
 
                 for p in products:
 
-                    product=parse_product(p)
+                    product = parse_product(p)
 
-                    pid=product["id"]
+                    pid = product["id"]
 
                     if pid not in db:
 
                         send_discord(product,"🆕 New Product")
 
-                        db[pid]=product
+                        db[pid] = product
                         continue
 
-                    old=db[pid]
+                    old = db[pid]
 
-                    changes=[]
+                    changes = []
 
-                    if product["price"]!=old["price"]:
-                        changes.append(f"💰 Price: ₹{old['price']} → ₹{product['price']}")
+                    if product["price"] != old["price"]:
+                        changes.append(f"💰 Price changed ₹{old['price']} → ₹{product['price']}")
 
-                    if old["qty"]==0 and product["qty"]>0:
+                    if old["qty"] == 0 and product["qty"] > 0:
                         changes.append(f"🚨 RESTOCK {old['qty']} → {product['qty']}")
 
-                    if product["qty"]!=old["qty"]:
-                        changes.append(f"📦 Qty: {old['qty']} → {product['qty']}")
+                    if product["qty"] != old["qty"]:
+                        changes.append(f"📦 Qty {old['qty']} → {product['qty']}")
 
                     if changes:
                         send_discord(product,"\n".join(changes))
 
-                    db[pid]=product
+                    db[pid] = product
 
-                page+=1
+                page += 1
 
             save_db(db)
 
@@ -228,5 +263,5 @@ def monitor():
 # START
 # ======================
 
-if __name__=="__main__":
+if __name__ == "__main__":
     monitor()
