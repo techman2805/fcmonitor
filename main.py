@@ -3,6 +3,7 @@ import time
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 # ======================
 # CONFIG
@@ -10,7 +11,8 @@ import re
 
 WEBHOOK_URL = "https://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
 
-CHECK_INTERVAL = 5
+CHECK_INTERVAL = 8
+MAX_THREADS = 5
 
 DATA_FILE = "database.json"
 
@@ -60,7 +62,7 @@ def save_db(data):
         json.dump(data,f,indent=2)
 
 # ======================
-# UTILITIES
+# UTIL
 # ======================
 
 def slugify(text):
@@ -69,84 +71,47 @@ def slugify(text):
     return text.strip('-')
 
 # ======================
-# DISCORD EMBED
+# DISCORD MESSAGE
 # ======================
 
 def send_discord(product,message):
 
-    embed = {
-        "title": "Hot Wheels Stock Bot",
-        "description": f"📉 **Price Drop Alert!**\n\n👉 [Click here to Buy on FirstCry]({product['url']})",
-        "color": 16753920,
-        "thumbnail": {
-            "url": product["image"]
-        },
-        "fields": [
-
-            {
-                "name": "🏷 Product Name",
-                "value": product["name"],
-                "inline": False
-            },
-
-            {
-                "name": "💰 Price",
-                "value": f"₹{product['price']}",
-                "inline": True
-            },
-
-            {
-                "name": "📦 Status",
-                "value": product["stock"],
-                "inline": True
-            },
-
-            {
-                "name": "🔢 Quantity",
-                "value": f"Only {product['qty']} Left!",
-                "inline": True
-            },
-
-            {
-                "name": "📊 Analytics",
-                "value": "• Status Changes: 1",
-                "inline": False
-            },
-
-            {
-                "name": "💸 Previous",
-                "value": f"₹{product['old_price']}",
-                "inline": False
-            }
-
+    embed={
+        "title":"Hot Wheels Stock Bot",
+        "description":f"📉 **Stock Alert**\n\n👉 [Click here to Buy]({product['url']})",
+        "color":16753920,
+        "thumbnail":{"url":product["image"]},
+        "fields":[
+            {"name":"🏷 Product Name","value":product["name"],"inline":False},
+            {"name":"💰 Price","value":f"₹{product['price']}","inline":True},
+            {"name":"📦 Status","value":product["stock"],"inline":True},
+            {"name":"🔢 Quantity","value":f"{product['qty']} left","inline":True},
+            {"name":"💸 Previous","value":f"₹{product['old_price']}","inline":False}
         ],
-
-        "footer": {
-            "text": "FirstCry Monitor"
-        }
+        "footer":{"text":"FirstCry Monitor"}
     }
 
-    payload = {
-        "username": "Hot Wheels Stock Bot",
-        "embeds": [embed]
+    payload={
+        "username":"Hot Wheels Stock Bot",
+        "embeds":[embed]
     }
 
     try:
         requests.post(WEBHOOK_URL,json=payload)
-    except Exception as e:
-        print("Webhook error:",e)
+    except:
+        pass
 
 # ======================
 # FETCH PRODUCTS
 # ======================
 
-def fetch_products(page):
+def fetch_page(page):
 
     params = API["params"].copy()
     params["PageNo"] = page
 
     try:
-        r = session.get(API["url"],params=params)
+        r = session.get(API["url"],params=params,timeout=15)
         data = r.json()
     except:
         return []
@@ -160,7 +125,7 @@ def fetch_products(page):
 
     products = parsed.get("Products",[])
 
-    print(f"Page {page} → {len(products)} products")
+    print(f"Page {page} → {len(products)}")
 
     return products
 
@@ -170,21 +135,21 @@ def fetch_products(page):
 
 def parse_product(p):
 
-    pid = str(p.get("PId"))
+    pid=str(p.get("PId"))
 
-    name = p.get("PNm","")
-    brand = p.get("BNm","")
+    name=p.get("PNm","")
+    brand=p.get("BNm","")
 
-    qty = int(p.get("CrntStock",0))
+    qty=int(p.get("CrntStock",0))
 
-    brand_slug = slugify(brand)
-    product_slug = slugify(name)
+    brand_slug=slugify(brand)
+    product_slug=slugify(name)
 
-    url = f"https://www.firstcry.com/{brand_slug}/{product_slug}/{pid}/product-detail"
+    url=f"https://www.firstcry.com/{brand_slug}/{product_slug}/{pid}/product-detail"
 
-    image = f"https://cdn.fcglcdn.com/brainbees/images/products/438x531/{pid}a.webp"
+    image=f"https://cdn.fcglcdn.com/brainbees/images/products/438x531/{pid}a.webp"
 
-    return {
+    return{
         "id":pid,
         "name":name,
         "price":p.get("SP",p.get("MRP")),
@@ -196,60 +161,72 @@ def parse_product(p):
     }
 
 # ======================
+# FAST PAGE SCAN
+# ======================
+
+def scan_all_pages():
+
+    products=[]
+
+    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+
+        futures=[executor.submit(fetch_page,i) for i in range(1,10)]
+
+        for f in futures:
+            result=f.result()
+            if result:
+                products.extend(result)
+
+    return products
+
+# ======================
 # MONITOR
 # ======================
 
 def monitor():
 
-    db = load_db()
+    db=load_db()
 
-    print("Brand 113 monitor started")
+    print("Fast monitor started")
 
     while True:
 
         try:
 
-            page = 1
+            products=scan_all_pages()
 
-            while True:
+            print("Total scanned:",len(products))
 
-                products = fetch_products(page)
+            for p in products:
 
-                if not products:
-                    break
+                product=parse_product(p)
 
-                for p in products:
+                pid=product["id"]
 
-                    product = parse_product(p)
+                if pid not in db:
 
-                    pid = product["id"]
+                    send_discord(product,"🆕 New Product")
 
-                    if pid not in db:
+                    db[pid]=product
+                    continue
 
-                        send_discord(product,"🆕 New Product")
+                old=db[pid]
 
-                        db[pid] = product
-                        continue
+                changes=[]
 
-                    old = db[pid]
+                if product["price"]!=old["price"]:
+                    changes.append(f"💰 Price changed ₹{old['price']} → ₹{product['price']}")
 
-                    changes = []
+                if old["qty"]==0 and product["qty"]>0:
+                    changes.append(f"🚨 RESTOCK {old['qty']} → {product['qty']}")
 
-                    if product["price"] != old["price"]:
-                        changes.append(f"💰 Price changed ₹{old['price']} → ₹{product['price']}")
+                if product["qty"]!=old["qty"]:
+                    changes.append(f"📦 Qty {old['qty']} → {product['qty']}")
 
-                    if old["qty"] == 0 and product["qty"] > 0:
-                        changes.append(f"🚨 RESTOCK {old['qty']} → {product['qty']}")
+                if changes:
+                    send_discord(product,"\n".join(changes))
 
-                    if product["qty"] != old["qty"]:
-                        changes.append(f"📦 Qty {old['qty']} → {product['qty']}")
-
-                    if changes:
-                        send_discord(product,"\n".join(changes))
-
-                    db[pid] = product
-
-                page += 1
+                db[pid]=product
 
             save_db(db)
 
@@ -263,5 +240,5 @@ def monitor():
 # START
 # ======================
 
-if __name__ == "__main__":
+if __name__=="__main__":
     monitor()
