@@ -9,72 +9,83 @@ from concurrent.futures import ThreadPoolExecutor
 # CONFIG
 # ======================
 
-WEBHOOK_URL = "Yhttps://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
+WEBHOOK_URL = "https://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
 
 CHECK_INTERVAL = 8
 MAX_THREADS = 5
 DATA_FILE = "database.json"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json",
-    "Referer": "https://www.firstcry.com/",
-    "Origin": "https://www.firstcry.com",
-    "X-Requested-With": "XMLHttpRequest"
-}
+API_URL = "https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging"
 
-# ======================
-# 3 API SOURCES
-# ======================
-
-APIS = [
-
-{
-"name":"New Arrivals",
-"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
-"params":{
-"PageNo":1,
-"PageSize":20,
-"SortExpression":"NewArrivals",
-"OnSale":0,
-"SearchString":"brand",
-"MasterBrand":113,
-"pcode":380008,
-"isclub":0
-}
-},
-
-{
-"name":"Popularity",
-"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
-"params":{
+PARAMS = {
 "PageNo":1,
 "PageSize":20,
 "SortExpression":"popularity",
 "OnSale":5,
 "SearchString":"brand",
+"SubCatId":"",
+"BrandId":"",
+"Price":"",
+"Age":"",
+"Color":"",
+"OptionalFilter":"",
+"OutOfStock":"",
+"Type1":"",
+"Type2":"",
+"Type3":"",
+"Type4":"",
+"Type5":"",
+"Type6":"",
+"Type7":"",
+"Type8":"",
+"Type9":"",
+"Type10":"",
+"Type11":"",
+"Type12":"",
+"Type13":"",
+"Type14":"",
+"Type15":"",
+"combo":"",
+"discount":"",
+"searchwithincat":"",
+"ProductidQstr":"",
+"searchrank":"",
+"pmonths":"",
+"cgen":"",
+"PriceQstr":"",
+"DiscountQstr":"",
+"sorting":"",
 "MasterBrand":113,
+"Rating":"",
+"Offer":"",
+"skills":"",
+"material":"",
+"curatedcollections":"",
+"measurement":"",
+"gender":"",
+"exclude":"",
+"premium":"",
 "pcode":380008,
-"isclub":0
-}
-},
-
-{
-"name":"Filters API",
-"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsFilters",
-"params":{
-"PageNo":1,
-"PageSize":20,
-"SortExpression":"NewArrivals",
-"SearchString":"brand",
-"OutOfStock":0,
-"MasterBrand":113,
-"pcode":380008,
-"isclub":0
-}
+"isclub":0,
+"deliverytype":"",
+"author":"",
+"booktype":"",
+"character":"",
+"collection":"",
+"format":"",
+"genre":"",
+"booklanguage":"",
+"publication":"",
+"skill":""
 }
 
-]
+HEADERS = {
+"User-Agent": "Mozilla/5.0",
+"Accept": "application/json",
+"Referer": "https://www.firstcry.com/",
+"Origin": "https://www.firstcry.com",
+"X-Requested-With": "XMLHttpRequest"
+}
 
 # ======================
 # SESSION
@@ -138,13 +149,13 @@ def send_discord(product,message):
 # FETCH PAGE
 # ======================
 
-def fetch_page(api,page):
+def fetch_page(page):
 
-    params=api["params"].copy()
-    params["PageNo"]=page
+    params = PARAMS.copy()
+    params["PageNo"] = page
 
     try:
-        r=session.get(api["url"],params=params,timeout=15)
+        r=session.get(API_URL,params=params,timeout=15)
         data=r.json()
     except:
         return []
@@ -158,7 +169,7 @@ def fetch_page(api,page):
 
     products=parsed.get("Products",[])
 
-    print(f"{api['name']} Page {page} → {len(products)}")
+    print(f"Page {page} → {len(products)}")
 
     return products
 
@@ -194,7 +205,7 @@ def parse_product(p):
     }
 
 # ======================
-# SCAN ALL APIS
+# SCAN
 # ======================
 
 def scan_products():
@@ -205,9 +216,8 @@ def scan_products():
 
         futures=[]
 
-        for api in APIS:
-            for page in range(1,8):
-                futures.append(executor.submit(fetch_page,api,page))
+        for page in range(1,8):
+            futures.append(executor.submit(fetch_page,page))
 
         for f in futures:
             result=f.result()
@@ -224,7 +234,7 @@ def monitor():
 
     db=load_db()
 
-    print("Multi-API monitor started")
+    print("Monitor started")
 
     while True:
 
