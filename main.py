@@ -4,6 +4,7 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 # ======================
 # CONFIG
@@ -12,80 +13,51 @@ from concurrent.futures import ThreadPoolExecutor
 WEBHOOK_URL = "https://discord.com/api/webhooks/1478062613685338207/4Rtw63OxeYawn_T3a6QUXNwsy_ONwt0vih8YYxMfRK5mqNm-d8MNaGLZKrnep-XlJUt_"
 
 CHECK_INTERVAL = 8
-MAX_THREADS = 5
+MAX_THREADS = 6
 DATA_FILE = "database.json"
 
-API_URL = "https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "Referer": "https://www.firstcry.com/",
+    "Origin": "https://www.firstcry.com",
+    "X-Requested-With": "XMLHttpRequest"
+}
 
-PARAMS = {
+# ======================
+# APIS
+# ======================
+
+APIS = [
+{
+"name":"1335 New Arrivals",
+"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
+"params":{
+"PageNo":1,
+"PageSize":20,
+"SortExpression":"NewArrivals",
+"OnSale":0,
+"SearchString":"brand",
+"MasterBrand":113,
+"pcode":600119,
+"isclub":1
+}
+},
+{
+"name":"1335 Popular",
+"url":"https://www.firstcry.com/svcs/SearchResult.svc/GetSearchResultProductsPaging",
+"params":{
 "PageNo":1,
 "PageSize":20,
 "SortExpression":"popularity",
 "OnSale":5,
 "SearchString":"brand",
-"SubCatId":"",
-"BrandId":"",
-"Price":"",
-"Age":"",
-"Color":"",
-"OptionalFilter":"",
-"OutOfStock":"",
-"Type1":"",
-"Type2":"",
-"Type3":"",
-"Type4":"",
-"Type5":"",
-"Type6":"",
-"Type7":"",
-"Type8":"",
-"Type9":"",
-"Type10":"",
-"Type11":"",
-"Type12":"",
-"Type13":"",
-"Type14":"",
-"Type15":"",
-"combo":"",
-"discount":"",
-"searchwithincat":"",
-"ProductidQstr":"",
-"searchrank":"",
-"pmonths":"",
-"cgen":"",
-"PriceQstr":"",
-"DiscountQstr":"",
-"sorting":"",
 "MasterBrand":113,
-"Rating":"",
-"Offer":"",
-"skills":"",
-"material":"",
-"curatedcollections":"",
-"measurement":"",
-"gender":"",
-"exclude":"",
-"premium":"",
-"pcode":380008,
-"isclub":0,
-"deliverytype":"",
-"author":"",
-"booktype":"",
-"character":"",
-"collection":"",
-"format":"",
-"genre":"",
-"booklanguage":"",
-"publication":"",
-"skill":""
+"pcode":600119,
+"isclub":1
 }
-
-HEADERS = {
-"User-Agent": "Mozilla/5.0",
-"Accept": "application/json",
-"Referer": "https://www.firstcry.com/",
-"Origin": "https://www.firstcry.com",
-"X-Requested-With": "XMLHttpRequest"
 }
+]
 
 # ======================
 # SESSION
@@ -94,6 +66,14 @@ HEADERS = {
 session = requests.Session()
 session.headers.update(HEADERS)
 session.get("https://www.firstcry.com/")
+
+# ======================
+# LOGGER
+# ======================
+
+def log(level,msg):
+    now=datetime.now().strftime("%H:%M:%S")
+    print(f"[{level}] {now} | {msg}")
 
 # ======================
 # DATABASE
@@ -110,7 +90,7 @@ def save_db(data):
         json.dump(data,f,indent=2)
 
 # ======================
-# UTIL
+# UTILITIES
 # ======================
 
 def slugify(text):
@@ -122,23 +102,35 @@ def slugify(text):
 # DISCORD ALERT
 # ======================
 
-def send_discord(product,message):
+def send_discord(product,title,color,previous=None,analytics=None):
+
+    timestamp=datetime.now().strftime("%H:%M:%S")
+
+    qty_text=f"**Only {product['qty']} Left!**" if product["qty"]>0 else "0"
+
+    fields=[
+        {"name":"🏷 Product","value":product["name"],"inline":False},
+        {"name":"💰 Price","value":f"₹{product['price']}","inline":True},
+        {"name":"📦 Status","value":product["stock"],"inline":True},
+        {"name":"🔢 Quantity","value":qty_text,"inline":True}
+    ]
+
+    if previous:
+        fields.append({"name":"🕒 Previous","value":previous,"inline":False})
+
+    if analytics:
+        fields.append({"name":"📊 Analytics","value":analytics,"inline":False})
 
     embed={
         "title":"Hot Wheels Stock Bot",
-        "description":f"{message}\n\n👉 [Click here to Buy]({product['url']})",
-        "color":16753920,
+        "description":f"{title}\n\n👉 **[Click here to Buy on FirstCry]({product['url']})**",
+        "color":color,
         "thumbnail":{"url":product["image"]},
-        "fields":[
-            {"name":"🏷 Product","value":product["name"],"inline":False},
-            {"name":"💰 Price","value":f"₹{product['price']}","inline":True},
-            {"name":"📦 Status","value":product["stock"],"inline":True},
-            {"name":"🔢 Qty","value":str(product["qty"]),"inline":True}
-        ],
-        "footer":{"text":"FirstCry Monitor"}
+        "fields":fields,
+        "footer":{"text":f"FirstCry Monitor • {timestamp}"}
     }
 
-    payload={"username":"Hot Wheels Stock Bot","embeds":[embed]}
+    payload={"embeds":[embed]}
 
     try:
         requests.post(WEBHOOK_URL,json=payload,timeout=10)
@@ -149,13 +141,13 @@ def send_discord(product,message):
 # FETCH PAGE
 # ======================
 
-def fetch_page(page):
+def fetch_page(api,page):
 
-    params = PARAMS.copy()
-    params["PageNo"] = page
+    params=api["params"].copy()
+    params["PageNo"]=page
 
     try:
-        r=session.get(API_URL,params=params,timeout=15)
+        r=session.get(api["url"],params=params,timeout=15)
         data=r.json()
     except:
         return []
@@ -166,10 +158,9 @@ def fetch_page(page):
         return []
 
     parsed=json.loads(response)
-
     products=parsed.get("Products",[])
 
-    print(f"Page {page} → {len(products)}")
+    log("DEBUG",f"{api['name']} P{page} → {len(products)} items")
 
     return products
 
@@ -199,16 +190,20 @@ def parse_product(p):
         "price":p.get("SP",p.get("MRP")),
         "old_price":p.get("MRP"),
         "qty":qty,
-        "stock":"In Stock" if qty>0 else "Out of Stock",
+        "stock":"🟢 **IN STOCK**" if qty>0 else "🔴 **OUT OF STOCK**",
         "image":image,
         "url":url
     }
 
 # ======================
-# SCAN
+# SCAN PRODUCTS
 # ======================
 
 def scan_products():
+
+    start=time.time()
+
+    log("INFO","Scan Starting")
 
     products=[]
 
@@ -216,13 +211,19 @@ def scan_products():
 
         futures=[]
 
-        for page in range(1,8):
-            futures.append(executor.submit(fetch_page,page))
+        for api in APIS:
+            for page in range(1,8):
+                futures.append(executor.submit(fetch_page,api,page))
+
+        log("PERF",f"{len(futures)} pages → parallel fetch")
 
         for f in futures:
             result=f.result()
             if result:
                 products.extend(result)
+
+    elapsed=time.time()-start
+    log("PERF",f"Fetched pages in {round(elapsed,2)}s")
 
     return products
 
@@ -234,49 +235,81 @@ def monitor():
 
     db=load_db()
 
-    print("Monitor started")
+    log("OK","Hot Wheels Monitor Started")
 
     while True:
+
+        alerts=0
+        start=time.time()
 
         try:
 
             products=scan_products()
 
-            print("Total scanned:",len(products))
+            log("INFO",f"Tracked: {len(products)} items")
 
             for p in products:
 
                 product=parse_product(p)
                 pid=product["id"]
 
+                now=time.time()
+
                 if pid not in db:
 
-                    send_discord(product,"🆕 New Product Detected")
+                    product["stock_start"]=now
+                    product["status_changes"]=0
                     db[pid]=product
                     continue
 
                 old=db[pid]
 
-                changes=[]
+                analytics=f"• Status Changes: {old.get('status_changes',0)}"
 
-                if product["price"]!=old["price"]:
-                    changes.append(f"💰 Price {old['price']} → {product['price']}")
+                # PRICE DROP
+                if product["price"] < old["price"]:
+                    send_discord(product,"📉 **Price Drop Alert!**",3066993,f"₹{old['price']}",analytics)
+                    alerts+=1
 
-                if old["qty"]==0 and product["qty"]>0:
-                    changes.append(f"🚨 RESTOCK {old['qty']} → {product['qty']}")
+                # PRICE INCREASE
+                if product["price"] > old["price"]:
+                    send_discord(product,"📈 **Price Increase Alert!**",15105570,f"₹{old['price']}",analytics)
+                    alerts+=1
 
-                if product["qty"]!=old["qty"]:
-                    changes.append(f"📦 Qty {old['qty']} → {product['qty']}")
+                # OUT OF STOCK
+                if old["qty"] > 0 and product["qty"] == 0:
 
-                if changes:
-                    send_discord(product,"\n".join(changes))
+                    duration=int((now-old.get("stock_start",now))/60)
+
+                    analytics=f"• Stock Duration: {duration}m\n• Status Changes: {old.get('status_changes',0)+1}"
+
+                    send_discord(product,"🔴 **Stock Alert: Out of Stock**",15158332,"IN_STOCK",analytics)
+
+                    product["status_changes"]=old.get("status_changes",0)+1
+                    alerts+=1
+
+                # BACK IN STOCK
+                if old["qty"] == 0 and product["qty"] > 0:
+
+                    product["stock_start"]=now
+
+                    analytics=f"• Status Changes: {old.get('status_changes',0)+1}"
+
+                    send_discord(product,"🎉 **Back in Stock!**",5763719,"OUT_OF_STOCK",analytics)
+
+                    product["status_changes"]=old.get("status_changes",0)+1
+                    alerts+=1
 
                 db[pid]=product
 
             save_db(db)
 
         except Exception as e:
-            print("Monitor error:",e)
+            log("ERROR",f"Monitor error: {e}")
+
+        elapsed=time.time()-start
+
+        log("OK",f"Done in {round(elapsed,2)}s | {len(products)} items | {alerts} alerts")
 
         time.sleep(CHECK_INTERVAL)
 
